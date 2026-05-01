@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
@@ -57,21 +59,22 @@ public class Census {
     }
 
     /**
-     * Simple version: walk regions sequentially, merge counts (swap to parallel later using {@link #CORES}).
+     * Aggregates across regions in parallel (common ForkJoin pool; parallelism matches available processors, see {@link #CORES}).
+     * Each region is read on one thread; counts are merged with thread-safe {@link ConcurrentMap#merge}.
      */
     public String[] top3Ages(List<String> regionNames) {
         if (regionNames == null || regionNames.isEmpty()) {
             return new String[0];
         }
 
-        Map<Integer, Integer> total = new HashMap<>();
-        for (String name : regionNames) {
+        ConcurrentMap<Integer, Integer> total = new ConcurrentHashMap<>();
+        regionNames.parallelStream().forEach(name -> {
             AgeInputIterator it = null;
             try {
                 try {
                     it = iteratorFactory.apply(name);
                 } catch (Exception e) {
-                    continue;
+                    return;
                 }
 
                 while (it.hasNext()) {
@@ -84,7 +87,7 @@ public class Census {
             } finally {
                 closeQuietly(it);
             }
-        }
+        });
 
         return formatTopCounts(total);
     }
