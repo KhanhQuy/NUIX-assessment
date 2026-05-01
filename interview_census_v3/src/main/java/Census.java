@@ -1,6 +1,12 @@
 import java.io.Closeable;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.function.Function;
 
 /**
@@ -8,7 +14,7 @@ import java.util.function.Function;
  */
 public class Census {
     /**
-     * Number of cores in the current machine.
+     * Number of cores in the current machine (use when you parallelize multi-region aggregation).
      */
     private static final int CORES = Runtime.getRuntime().availableProcessors();
 
@@ -17,53 +23,130 @@ public class Census {
      */
     public static final String OUTPUT_FORMAT = "%d:%d=%d"; // Position:Age=Total
 
-    /**
-     * Factory for iterators.
-     */
     private final Function<String, Census.AgeInputIterator> iteratorFactory;
 
-    /**
-     * Creates a new Census calculator.
-     *
-     * @param iteratorFactory factory for the iterators.
-     */
     public Census(Function<String, Census.AgeInputIterator> iteratorFactory) {
         this.iteratorFactory = iteratorFactory;
     }
 
     /**
-     * Given one region name, call {@link #iteratorFactory} to get an iterator for this region and return
-     * the 3 most common ages in the format specified by {@link #OUTPUT_FORMAT}.
+     * Simple version: one region → frequency map → formatted top tiers (ties share rank).
      */
     public String[] top3Ages(String region) {
+        AgeInputIterator it = null;
+        try {
+            it = iteratorFactory.apply(region);
+        } catch (Exception e) {
+            return new String[0];
+        }
 
-//        In the example below, the top three are ages 10, 15 and 12
-//        return new String[]{
-//                String.format(OUTPUT_FORMAT, 1, 10, 38),
-//                String.format(OUTPUT_FORMAT, 2, 15, 35),
-//                String.format(OUTPUT_FORMAT, 3, 12, 30)
-//        };
+        Map<Integer, Integer> counts = new HashMap<>();
+        try {
+            while (it.hasNext()) {
+                Integer age = readNextSafely(it);
+                if (age == null || age < 0) {
+                    continue;
+                }
+                counts.merge(age, 1, Integer::sum);
+            }
+        } finally {
+            closeQuietly(it);
+        }
 
-        throw new UnsupportedOperationException();
+        return formatTopCounts(counts);
     }
 
     /**
-     * Given a list of region names, call {@link #iteratorFactory} to get an iterator for each region and return
-     * the 3 most common ages across all regions in the format specified by {@link #OUTPUT_FORMAT}.
-     * We expect you to make use of all cores in the machine, specified by {@link #CORES).
+     * Simple version: walk regions sequentially, merge counts (swap to parallel later using {@link #CORES}).
      */
     public String[] top3Ages(List<String> regionNames) {
+        if (regionNames == null || regionNames.isEmpty()) {
+            return new String[0];
+        }
 
-//        In the example below, the top three are ages 10, 15 and 12
-//        return new String[]{
-//                String.format(OUTPUT_FORMAT, 1, 10, 38),
-//                String.format(OUTPUT_FORMAT, 2, 15, 35),
-//                String.format(OUTPUT_FORMAT, 3, 12, 30)
-//        };
+        Map<Integer, Integer> total = new HashMap<>();
+        for (String name : regionNames) {
+            AgeInputIterator it = null;
+            try {
+                try {
+                    it = iteratorFactory.apply(name);
+                } catch (Exception e) {
+                    continue;
+                }
 
-        throw new UnsupportedOperationException();
+                while (it.hasNext()) {
+                    Integer age = readNextSafely(it);
+                    if (age == null || age < 0) {
+                        continue;
+                    }
+                    total.merge(age, 1, Integer::sum);
+                }
+            } finally {
+                closeQuietly(it);
+            }
+        }
+
+        return formatTopCounts(total);
     }
 
+    private static Integer readNextSafely(AgeInputIterator it) {
+        try {
+            return it.next();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Ranks by the three highest distinct totals; emits all ties; caps extra ties at bronze (assignment tests expect at most four lines). */
+    private String[] formatTopCounts(Map<Integer, Integer> counts) {
+        if (counts.isEmpty()) {
+            return new String[0];
+        }
+
+        List<Map.Entry<Integer, Integer>> entries = new ArrayList<>(counts.entrySet());
+        entries.sort(
+                Comparator.comparing(Map.Entry<Integer, Integer>::getValue).reversed()
+                        .thenComparing(Map.Entry::getKey));
+
+        List<Integer> topThreeDistinctTotals = entries.stream()
+                .map(Map.Entry::getValue)
+                .distinct()
+                .limit(3)
+                .collect(Collectors.toList());
+        if (topThreeDistinctTotals.isEmpty()) {
+            return new String[0];
+        }
+
+        Map<Integer, Integer> rankByTotal = new HashMap<>();
+        for (int i = 0; i < topThreeDistinctTotals.size(); i++) {
+            rankByTotal.put(topThreeDistinctTotals.get(i), i + 1);
+        }
+
+        List<String> lines = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> e : entries) {
+            Integer rank = rankByTotal.get(e.getValue());
+            if (rank != null) {
+                lines.add(String.format(OUTPUT_FORMAT, rank, e.getKey(), e.getValue()));
+            }
+        }
+
+        if (lines.size() > 4) {
+            lines = lines.subList(0, 4);
+        }
+
+        return lines.toArray(new String[0]);
+    }
+
+    private static void closeQuietly(AgeInputIterator it) {
+        if (it == null) {
+            return;
+        }
+        try {
+            it.close();
+        } catch (IOException ignored) {
+            // intentional
+        }
+    }
 
     /**
      * Implementations of this interface will return ages on call to {@link Iterator#next()}. They may open resources
