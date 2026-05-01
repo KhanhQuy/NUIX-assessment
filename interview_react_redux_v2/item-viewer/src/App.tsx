@@ -1,25 +1,32 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect } from 'react';
+import { Container, Grid, Typography, Box } from '@mui/material';
+import { useAppDispatch } from './store/hooks';
+import { fetchItems } from './store/itemsSlice';
+import { ItemTable } from './components/ItemTable/ItemTable';
+import { ItemDetails } from './components/ItemDetails/ItemDetails';
 
 function App() {
+  const dispatch = useAppDispatch();
+
+  useEffect(() => {
+    dispatch(fetchItems());
+  }, [dispatch]);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        Item Viewer
+      </Typography>
+
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={6}>
+          <ItemTable />
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <ItemDetails />
+        </Grid>
+      </Grid>
+    </Container>
   );
 }
 
