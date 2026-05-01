@@ -46,8 +46,11 @@ public class Census {
         try {
             while (it.hasNext()) {
                 Integer age = readNextSafely(it);
-                if (age == null || age < 0) {
+                if (age == null) {
                     continue;
+                }
+                if (age < 0) {
+                    throw new IllegalArgumentException("negative age");
                 }
                 counts.merge(age, 1, Integer::sum);
             }
